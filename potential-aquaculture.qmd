@@ -1,0 +1,206 @@
+---
+title: "EDS223 Homework 3"
+subtitle: "Prioritizing potential aquaculture"
+author: "Eden Gonzalez"
+date: 2025-11-07
+execute: 
+  eval: true
+format: pdf
+mainfont: Helvetica
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(here)
+library(sf)
+library(terra)
+library(tidyverse)
+library(tmap)
+library(spData)
+library(kableExtra)
+```
+
+```{r}
+eez <- st_read(here("potential-aquaculture", "data", "wc_regions_clean.shp")) 
+
+depth <- rast(here("potential-aquaculture", "data", "depth.tif"))
+
+sst_files <- list.files(path = "potential-aquaculture/data/sst",
+                        pattern = "\\.tif$",
+                        full.names = TRUE)
+
+sst <- rast(sst_files)
+
+
+crs(depth) <- crs(sst) 
+```
+
+
+
+```{r}
+# Verification that crs match
+if((st_crs(eez) == st_crs(sst)) & (st_crs(eez) == st_crs(depth))){
+  print("coordinate reference systems match!")
+}else{
+  warning("coordinate reference systems do NOT match")
+  print(paste("eez has ", st_crs(eez)$epsg, "EPSG"))
+  print(paste("depth has",  st_crs(depth)$epsg, "EPSG"))
+  print(paste("sst has",  st_crs(sst)$epsg, "EPSG"))
+}
+```
+
+# Process data
+```{r}
+# Find the mean SST from 2008-2012 in Celsius
+sst_C <- mean(sst, na.rm = TRUE) - 273.15
+```
+
+
+```{r}
+# Crop depth raster to match the extent of the SST raster
+depth_cropped <- crop(depth, sst_C)
+
+# Resample the depth data to match the resolution of the SST data using the bilinear method approach
+depth_resampled <- resample(depth_cropped, sst_C, method = "bilinear")
+
+# Check if features match
+cat("After resampling:\n")
+cat("CRS match:    ", same.crs(sst_C, depth_resampled), "\n")
+cat("Resolutions match:", all(res(sst_C) == res(depth_resampled)), "\n")
+cat("Origins match:    ", all(round(origin(sst_C), 8) == round(origin(depth_resampled), 8)), "\n")
+cat("Extents match:    ", ext(sst_C) == ext(depth_resampled), "\n")
+
+```
+
+
+
+# Find suitable locations
+
+Oysters
+Research has shown that oysters need the following conditions for optimal growth:
+
+sea surface temperature: 11-30°C
+depth: 0-70 meters below sea level
+
+species of interest: Kumamoto Oyster
+
+
+```{r}
+sst_min <- 11
+sst_max <- 30
+
+depth_min <- -70
+depth_max <- 0
+ 
+# SST reclassification matrix
+sst_rcl <- matrix(c(
+  -Inf,   sst_min,  0,
+  sst_min,  sst_max,  1,
+  sst_max,  Inf,  0
+), ncol = 3, byrow = TRUE)
+
+suitable_sst <- classify(sst_C, rcl = sst_rcl)
+
+# Depth reclassification matrix
+depth_rcl <- matrix(c(
+  -Inf,   depth_min,  0,
+  depth_min,  depth_max,  1,
+  depth_max,  Inf,  0
+), ncol = 3, byrow = TRUE)
+
+suitable_depth <- classify(depth_resampled, rcl = depth_rcl)
+
+
+# Find locations that satisfy both SST and depth conditions
+suitable_combined <- c(suitable_sst, suitable_depth)
+suitable <- lapp(suitable_combined, fun = function(temp, depth) temp * depth) 
+```
+
+
+
+
+```{r}
+# rasterize eex boundaries
+eez_raster <- rasterize(eez, suitable, field = "rgn_id")
+
+#
+suitable_boundary <- mask(suitable, eez_raster)
+suitable_boundary[suitable_boundary == 0] <- NA
+plot(suitable_boundary)
+
+```
+
+
+```{r}
+# Calculate suitable area per each cell in km^2
+cell_area <- cellSize(suitable_boundary, unit = "km")
+
+# The suitable cells, each cells contains their suitable area in km^2 
+suitable_area <- cell_area * suitable_boundary
+```
+
+```{r}
+# Create a raster that has the same extent, resolution, and CRS as suitable_area
+regions <- rasterize(eez, suitable_area, field = "rgn_id")
+
+# Sum of suitable area per region 
+suitable_eez <- zonal(suitable_area, regions, fun = "sum", na.rm = TRUE)
+
+suitable_area_eez <- suitable_eez|> 
+  as.tibble() 
+
+suitable_area_eez|> 
+  arrange(desc(area)) |> 
+  kable(col.names = c("Region", "Area (km)"), caption = "Suitable Area per Exclusive Economic Zone") |> 
+  kable_styling(bootstrap_options = "striped")
+```
+
+
+```{r}
+# join the suitable area per region data frame with the eez polygons
+area_eez <- left_join(suitable_area_eez, eez)
+```
+
+```{r}
+area_eez_sf <- st_as_sf(area_eez)
+
+tm_basemap("OpenStreetMap") +
+tm_shape(area_eez_sf) +
+  tm_polygons(fill = "area",
+  fill.scale = tm_scale(
+      values = c("lightsteelblue", "paleturquoise2", "paleturquoise3",
+                 "cadetblue3", "seagreen4")),  # Reassign colors
+    fill.legend = tm_legend(title = " Area (km^2)", 
+    position = tm_pos_out("right"), 
+              frame = FALSE,
+              title.size = 0.7)) +
+tm_shape(suitable_area) +
+  tm_raster(col.scale = tm_scale_categorical(values = "red"),
+            col.legend = tm_legend_hide()) +
+  tm_scalebar(position = c("left", "bottom")) +  # Add scale bar   
+  tm_compass(position = c("right", "top")) + 
+  tm_credits("Source: NOAA, GEBCO, Marineregions", position = c("left", "bottom")) +
+  tm_title("Suitable Area for insertspecies\nby Exclusive Economic Zone") +
+  tm_layout(frame.lwd = 0.4)
+
+
+```
+
+"lightsteelblue", "lightskyblue2", "paleturquoise2",
+                 "paleturquoise3", "darkolivegreen"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
