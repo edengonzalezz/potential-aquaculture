@@ -29,7 +29,7 @@ library(kableExtra)
 #| warning: false
 #| message: false
 # Exclusive Economic Zones (EEZs) in the West Coast, vector data
-eez <- st_read(here( "data", "wc_regions_clean.shp")) 
+eez <- st_read(here("data", "wc_regions_clean.shp")) 
 
 # Depth of the ocean, raster data
 depth <- rast(here("data", "depth.tif"))
@@ -48,13 +48,13 @@ crs(depth) <- crs(sst)
 
 ```{r}
 # Verify that all CRSs match
-if((st_crs(eez) == st_crs(sst)) & (st_crs(eez) == st_crs(depth) & (st_crs(sst) == st_crs(depth)))){
+if((st_crs(eez) == st_crs(crs(sst))) & (st_crs(crs(eez)) == st_crs(crs(depth)) & (st_crs(crs(sst)) == st_crs(crs(depth))))){
   print("coordinate reference systems match!")
 }else{
   warning("coordinate reference systems do NOT match")
   print(paste("eez has ", st_crs(eez)$epsg, "EPSG"))
-  print(paste("depth has",  st_crs(depth)$epsg, "EPSG"))
-  print(paste("sst has",  st_crs(sst)$epsg, "EPSG"))
+  print(paste("depth has",  st_crs(crs(depth))$epsg, "EPSG"))
+  print(paste("sst has",  st_crs(crs(sst))$epsg, "EPSG"))
 }
 ```
 
@@ -70,10 +70,10 @@ depth_resampled <- resample(depth_cropped, sst_C, method = "bilinear")
 
 # Check if features match
 cat("After resampling:\n")
-cat("CRS match:    ", same.crs(sst_C, depth_resampled), "\n")
-cat("Resolutions match:", all(res(sst_C) == res(depth_resampled)), "\n")
-cat("Origins match:    ", all(round(origin(sst_C), 8) == round(origin(depth_resampled), 8)), "\n")
-cat("Extents match:    ", ext(sst_C) == ext(depth_resampled), "\n")
+cat("CRS match: ", same.crs(sst_C, depth_resampled), "\n")
+cat("Resolutions match: ", all(res(sst_C) == res(depth_resampled)), "\n")
+cat("Origins match: ", all(round(origin(sst_C), 8) == round(origin(depth_resampled), 8)), "\n")
+cat("Extents match: ", ext(sst_C) == ext(depth_resampled), "\n")
 ```
 
 
@@ -89,20 +89,6 @@ depth: 0-70 meters below sea level
 
 species of interest: Kumamoto Oyster
 
-
-
-
-
-```{r}
-# if(st_crs(suitable_sst) == st_crs(suitable_depth)){
-#   print("coordinate reference systems match!")
-# }else{
-#   warning("coordinate reference systems do NOT match")
-#   print(paste("suitable_sst has ", st_crs(suitable_sst), "EPSG"))
-#   print(paste("depth has",  st_crs(suitable_sst), "EPSG"))
-
-# }
-```
 
 
 # Find suitable locations
@@ -156,10 +142,10 @@ cell_area <- cellSize(suitable_eez, unit = "km")
 suitable_area <- cell_area * suitable_eez
 
 # Create a raster that has the same extent, resolution, and CRS as suitable_area
-regions <- rasterize(eez, suitable_area, field = "rgn_id")
+#DELETE LOWKS
 
 # Sum of suitable area per region 
-suitable_eez <- zonal(suitable_area, regions, fun = "sum", na.rm = TRUE)
+suitable_eez <- zonal(suitable_area, eez_raster, fun = "sum", na.rm = TRUE)
 
 # Transform into a data frame
 suitable_area_eez <- suitable_eez|> 
